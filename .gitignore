@@ -1,0 +1,68 @@
+# ============================================================
+# travel-experts-import — root .gitignore
+# Monorepo: web/ (Next.js) + functions/ (Python Azure Functions) + prisma/
+# ============================================================
+
+# --- Secrets / local config (mens-only, nooit committen) ---
+local.settings.json
+**/local.settings.json
+.env
+.env.*
+!.env.example
+!.env.*.example
+!*.template.json
+!*.template.*
+
+# Guard: de canonieke Python-deps leven in functions/requirements.txt. Een requirements.txt in
+# de repo-ROOT is altijd een misplaatste kopie (bevatte historisch de gecommitte GitHub-PAT) →
+# root-anchored ignore zodat 'git add -A' 'm nooit meepakt; functions/requirements.txt blijft wél getrackt.
+/requirements.txt
+
+# --- Node / Next.js (web/) ---
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+next-env.d.ts
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+coverage/
+
+# --- Prisma generated client (indien buiten node_modules gegenereerd) ---
+prisma/generated/
+**/generated/prisma/
+
+# --- Python / Azure Functions (functions/) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.python_packages/
+bin/
+obj/
+
+# --- Azure Functions Core Tools local artifacts ---
+.azurefunctions/
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Misc ---
+*.log
+.cache/

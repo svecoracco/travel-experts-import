@@ -1,0 +1,15 @@
+{
+  "name": "travel-experts-import",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Monorepo-root. Bevat GEEN app-code — dit package.json bestaat uitsluitend zodat prisma/schema.prisma (gedeeld tussen web/ en functions/) tooling-resolvable is voor de Prisma CLI (prisma generate/validate) vanuit de root, zonder dat Prisma's 'auto-install'-heuristiek een eigen kopie op een onvoorspelbare plek aanmaakt (ontdekt tijdens de Fase 1-verificatie — zie het eindrapport van de track-worker). App-code leeft in web/ (Next.js) en functions/ (Python Azure Functions); zie docs/github-agents-plan-writer-agent-md-foll-whimsical-lecun.md sectie B Doelstructuur.",
+  "prisma": {
+    "schema": "./prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  }
+}

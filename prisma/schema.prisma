@@ -1,0 +1,280 @@
+// ============================================================================
+// prisma/schema.prisma — Bevroren contract (Fase 1). Wijzig NIET buiten fase 1
+// zonder expliciete afstemming (zie docs/github-agents-plan-writer-agent-md-
+// foll-whimsical-lecun.md, harde projectregel #5).
+//
+// Bron: gespiegeld vanuit
+//   - travel-experts-backend/apps/main/database/create_tables.sql
+//   - travel-experts-backend/apps/main/database/create_vat_return_entries.sql
+//   (beide read-only bronrepo, alleen gelezen, niet gemuteerd)
+//
+// Schema-selectie (beslissing #1 — connection-string-route, spike-uitkomst 2026-07-24):
+//   ÉÉN Prisma-build/codebase bedient N deployments. Er is GEEN `@@schema`-
+//   attribuut en GEEN schema-prefix in enige `@@map(...)` hieronder — alle
+//   modelnamen zijn "unqualified". Het actieve client-schema (`bts`, `clientb`,
+//   ...) wordt bepaald door de **`;schema=<tenant>;`-parameter in DATABASE_URL**
+//   (uit een Azure App Setting), NIET door de login-DEFAULT_SCHEMA.
+//   BEWEZEN op de gate: Prisma 6.19.3 / SQL Server NEGEERT DEFAULT_SCHEMA — een
+//   schema-loze DATABASE_URL genereert `FROM [dbo].[users]` (error 208); pas
+//   `;schema=<tenant>;` maakt er `FROM [<tenant>].[users]` van. Eén PrismaClient
+//   per proces, geen tenant-switching at runtime. Zie docs/contracts.md §5-§6
+//   voor de volledige route + het bewijs. (multiSchema wordt NIET gebruikt.)
+//
+// Retired t.o.v. de bron-DDL (NIET opgenomen, zie plan §1.2):
+//   - refresh_tokens  (NextAuth-JWT-sessie vervangt refresh-tokens volledig)
+//   - otp_codes       (OTP was al een wees-component in de frontend; vervalt)
+//
+// Kernontwerp-afwijkingen t.o.v. de LETTERLIJKE bron-DDL (bewust, zie plan
+// §Belangrijke bron → doel-verschillen #4 "Import-progress: in-memory SSE →
+// import_jobs + polling"):
+//   - `ImportJob.status` kent een extra waarde 'queued' (bron-CHECK kende
+//     alleen pending/running/completed/failed). Nodig omdat
+//     POST /api/imports/{id}/run nu een queue-message dropt vóór de
+//     queue-functie 'running' zet (zie docs/contracts.md).
+//   - `ImportJob` heeft vier nieuwe progress_*-kolommen (progressPhase/
+//     Current/Total/Message) — vervangt de oude in-memory ProgressInfo
+//     (apps/main/app/jobs/runner.py); de queue-functie (fase 3) schrijft hier
+//     rechtstreeks naartoe i.p.v. naar een gedeeld proces-geheugen.
+//   - `ImportJob.blobRef` (kolom `blob_ref`) vervangt de oude lokale-schijf
+//     `file_path`: functions draaien stateless/consumption-plan, dus het
+//     bestand leeft in Azure Blob Storage; dit veld is exact de `blobRef` uit
+//     de bevroren queue-payload in docs/contracts.md (zelfde naam, geen
+//     vertaalslag tussen de twee contracten).
+//   - `ImportJob.updatedAt` is nieuw (freshness voor de polling-UI, geen
+//     DB-trigger — Track B zet 'm bij elke Prisma-write).
+//
+// Bekende Prisma-beperking (LET OP bij 1.3 DDL): `vat_return_entries` had in
+// de bron een *filtered* unique index
+// (`uq_vat_return_active_company_period ON (company_id, period) WHERE
+// dismissed = 0`, i.e. meerdere dismissed-rijen per periode mogen wél
+// samenvallen). Prisma's schema-taal ondersteunt GEEN partial/filtered unique
+// index (geen WHERE-clausule op @@unique). Hieronder staat daarom een gewone
+// (niet-unieke) @@index voor queryperformance; de ECHTE filtered-unique-
+// constraint leeft uitsluitend in prisma/ddl/schema.template.sql en wordt
+// door de DB afgedwongen, niet door Prisma/de applicatielaag.
+//
+// Bron-inconsistentie (informatief, geen actie in fase 1): de SQLAlchemy-sync-
+// modellen (apps/syncs/models.py) declareren `csv_blob_sync_log.blob_name` als
+// UNIQUE en een extra kolom `synced_to_table` die NIET in create_tables.sql
+// voorkomt. Dit schema mirrort de DDL (de aangewezen bron per plan §1.2) —
+// dus GEEN unique op blob_name, GEEN synced_to_table. Track A: reconcilieer
+// dit bij het porten van `syncs/` in fase 2 tegen de echte deployed DB-vorm.
+// ============================================================================
+
+// LET OP — Prisma-major gepind op 6.x (web/package.json: "prisma"/"@prisma/client"
+// exact "6.19.3", geen "^"): Prisma 7 verwijdert `datasource.url` uit
+// schema.prisma volledig (verplicht i.p.v. driver-adapters + prisma.config.ts,
+// zie https://pris.ly/d/config-datasource) en breekt daarmee de hieronder
+// letterlijk vereiste vorm (`url = env("DATABASE_URL")`). NIET ongepind
+// upgraden naar 7.x zonder deze datasource-vorm + de generate/build-flow
+// opnieuw te valideren (ontdekt tijdens fase 1-verificatie, zie eindrapport).
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+  // Expliciete output: schema.prisma leeft in prisma/ (root), een SIBLING van
+  // web/ — Node's module-resolutie loopt alleen omhoog, dus zonder deze regel
+  // schrijft `prisma generate` het echte gegenereerde client (met query-
+  // engine) naar de dichtstbijzijnde resolvebare `@prisma/client`-locatie
+  // vanuit prisma/'s eigen mapboom (repo-root), NIET naar web/node_modules —
+  // en `import { PrismaClient } from '@prisma/client'` vanuit web/src/** zou
+  // dan de kale, ongegenereerde stub-package uit web/node_modules oppikken
+  // (ontdekt tijdens fase 1-verificatie, zie eindrapport).
+  output = "../web/node_modules/.prisma/client"
+}
+
+// ----------------------------------------------------------------------------
+// Schema-selectie: tenant via `;schema=<tenant>;` in DATABASE_URL (zie kop-
+// comment + docs/contracts.md §5-§6). GEEN `@@schema`/multiSchema: de spike
+// (2026-07-24) bewees dat Prisma 6.19.3/SQL Server DEFAULT_SCHEMA negeert en de
+// connection-string-parameter uniform op elke tabel toepast. Eén build, N sites.
+// ----------------------------------------------------------------------------
+
+// ============================================================================
+// users — bron: create_tables.sql §1
+// ============================================================================
+model User {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique @db.NVarChar(255)
+  displayName  String?   @map("display_name") @db.NVarChar(100)
+  /// CHECK (role IN ('admin', 'operator')) — afgedwongen in de DDL, niet hier
+  role         String    @default("operator") @db.NVarChar(20)
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime2
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.DateTime2
+  lastLoginAt  DateTime? @map("last_login_at") @db.DateTime2
+
+  userCompanies      UserCompany[]
+  appConfigUpdates   AppConfig[]   @relation("AppConfigUpdatedBy")
+  importJobsCreated  ImportJob[]   @relation("ImportJobCreatedBy")
+  auditLogsAsActor   AuditLog[]    @relation("AuditLogActor")
+  auditLogsAsTarget  AuditLog[]    @relation("AuditLogTarget")
+
+  @@map("users")
+}
+
+// ============================================================================
+// user_companies — bron: create_tables.sql §"User <-> Company assignments"
+// Multi-tenant company-toegang binnen één deployment; company_id is
+// data-gedreven (via app_config), orthogonaal aan "client"/schema.
+// ============================================================================
+model UserCompany {
+  userId    Int      @map("user_id")
+  companyId Int      @map("company_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime2
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, companyId], map: "pk_user_companies")
+  @@index([companyId], map: "ix_user_companies_company")
+  @@map("user_companies")
+}
+
+// ============================================================================
+// app_config — bron: create_tables.sql §4 ("replaces odoo.yml")
+// resolve_config-precedentie (script > company > global > default) leeft in
+// functions/config_resolve.py (fase 3) resp. de web-Prisma-reads (fase 5);
+// dit model legt alleen de opslagvorm vast.
+// ============================================================================
+model AppConfig {
+  id          Int      @id @default(autoincrement())
+  companyId   Int      @default(0) @map("company_id")
+  scriptName  String   @default("") @map("script_name") @db.NVarChar(50)
+  key         String   @db.NVarChar(100)
+  value       String   @db.NVarChar(Max)
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.DateTime2
+  updatedById Int?     @map("updated_by")
+
+  updatedByUser User? @relation("AppConfigUpdatedBy", fields: [updatedById], references: [id])
+
+  // Behouden sleutelconstraint (plan §1.2, expliciet verplicht):
+  @@unique([companyId, scriptName, key], map: "uq_config_scope_key")
+  @@map("app_config")
+}
+
+// ============================================================================
+// import_jobs — bron: create_tables.sql §5 (+ ALTER-additions accounting_date/
+// original_entry_ref) — herontworpen voor queue-based import (zie kop-comment
+// hierboven + plan §Belangrijke bron → doel-verschillen #4).
+// ============================================================================
+model ImportJob {
+  id                Int       @id @default(autoincrement())
+  pluginName        String    @map("plugin_name") @db.NVarChar(50)
+  companyId         Int       @map("company_id")
+  /// CHECK (status IN ('pending','queued','running','completed','failed'))
+  /// 'queued' is NIEUW t.o.v. de bron-DDL — zie kop-comment.
+  status            String    @default("pending") @db.NVarChar(20)
+  fileName          String    @map("file_name") @db.NVarChar(255)
+  /// Vervangt de bron-kolom `file_path` (lokale schijf) — zie kop-comment.
+  /// Zelfde naam/betekenis als `blobRef` in de queue-message-payload
+  /// (docs/contracts.md).
+  blobRef           String    @map("blob_ref") @db.NVarChar(500)
+  dryRun            Boolean   @default(false) @map("dry_run")
+  accountingDate    DateTime? @map("accounting_date") @db.Date
+  originalEntryRef  String?   @map("original_entry_ref") @db.NVarChar(255)
+  resultSummary     String?   @map("result_summary") @db.NVarChar(Max)
+  skipReportPath    String?   @map("skip_report_path") @db.NVarChar(500)
+  createdBy         Int       @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.DateTime2
+  startedAt         DateTime? @map("started_at") @db.DateTime2
+  completedAt       DateTime? @map("completed_at") @db.DateTime2
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.DateTime2
+
+  // Progress-velden (NIEUW t.o.v. bron-DDL — vervangen de in-memory
+  // ProgressInfo-dataclass uit apps/main/app/jobs/runner.py). De queue-functie
+  // (fase 3) schrijft hier bij elke on_progress-callback naar; fase-waarden
+  // in de oude code: starting/validating/parsing/connecting/building/
+  // executing/done/failed (niet DB-afgedwongen, vrije NVARCHAR).
+  progressPhase    String? @map("progress_phase") @db.NVarChar(20)
+  progressCurrent  Int?    @map("progress_current")
+  progressTotal    Int?    @map("progress_total")
+  progressMessage  String? @map("progress_message") @db.NVarChar(1000)
+
+  creator User @relation("ImportJobCreatedBy", fields: [createdBy], references: [id])
+
+  @@map("import_jobs")
+}
+
+// ============================================================================
+// audit_log — bron: create_tables.sql §6 (admin-acties)
+// ============================================================================
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  actorUserId   Int      @map("actor_user_id")
+  action        String   @db.NVarChar(50)
+  targetUserId  Int?     @map("target_user_id")
+  beforeValue   String?  @map("before_value") @db.NVarChar(255)
+  afterValue    String?  @map("after_value") @db.NVarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime2
+
+  // Expliciete NoAction (i.p.v. Prisma's default cascade-gok) op BEIDE FK's:
+  // matcht de bron-DDL (fk_audit_log_actor/fk_audit_log_target hebben geen
+  // ON DELETE/ON UPDATE-clausule = SQL Server default NO ACTION) én is
+  // functioneel verplicht — twee FK's naar hetzelfde model (User) met een
+  // cascade-default geven een "multiple cascade paths"-validatiefout
+  // (ontdekt tijdens `npx prisma generate` in fase 1-verificatie).
+  actor  User  @relation("AuditLogActor", fields: [actorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  target User? @relation("AuditLogTarget", fields: [targetUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([createdAt(sort: Desc)], map: "ix_audit_log_created_at")
+  @@map("audit_log")
+}
+
+// ============================================================================
+// vat_return_entries — bron: create_vat_return_entries.sql (incl. de
+// dismissed/dismissed_by/dismissed_at ALTER-additions, al meegenomen in de
+// kolomlijst hieronder). Zie kop-comment voor de Prisma-beperking rond de
+// filtered unique index.
+// ============================================================================
+model VatReturnEntry {
+  id            Int       @id @default(autoincrement())
+  companyId     Int       @map("company_id")
+  /// "2026-02" (YYYY-MM)
+  period        String    @db.NVarChar(7)
+  /// Odoo account.move ID
+  odooMoveId    Int       @map("odoo_move_id")
+  /// bv. "MISC/2026/0042"
+  odooMoveName  String?   @map("odoo_move_name") @db.NVarChar(100)
+  /// "VAT-CORR-2026-02"
+  ref           String    @db.NVarChar(50)
+  /// user-email uit de sessie (voorheen: uit de Flask-JWT)
+  createdBy     String?   @map("created_by") @db.NVarChar(100)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime2
+  totalAmount   Float?    @map("total_amount")
+  lineCount     Int?      @map("line_count")
+  dismissed     Boolean   @default(false)
+  dismissedBy   String?   @map("dismissed_by") @db.NVarChar(100)
+  dismissedAt   DateTime? @map("dismissed_at") @db.DateTime2
+
+  // NIET @@unique: de bron gebruikt een *filtered* unique index
+  // (WHERE dismissed = 0) — niet uitdrukbaar in Prisma. Zie kop-comment en
+  // prisma/ddl/schema.template.sql voor de echte constraint.
+  @@index([companyId], map: "ix_vat_return_entries_company_id")
+  @@map("vat_return_entries")
+}
+
+// ============================================================================
+// csv_blob_sync_log — bron: create_tables.sql §"CSV Blob Sync Log"
+// Beslissing #5: Prisma-model is read-only vanuit web; de function schrijft
+// via de eigen DB-connectie (raw SQL/pyodbc, zoals nu in
+// jobs/blob_csv_sync.py) — dit model legt alleen de leesvorm vast.
+// ============================================================================
+model CsvBlobSyncLog {
+  id            Int       @id @default(autoincrement())
+  blobName      String    @map("blob_name") @db.NVarChar(500)
+  /// CHECK (status IN ('pending', 'success', 'error'))
+  status        String    @default("pending") @db.NVarChar(20)
+  startedAt     DateTime  @default(now()) @map("started_at") @db.DateTime2
+  finishedAt    DateTime? @map("finished_at") @db.DateTime2
+  errorMessage  String?   @map("error_message") @db.NVarChar(Max)
+  rowCount      Int?      @map("row_count")
+  /// CHECK (triggered_by IN ('cron', 'manual'))
+  triggeredBy   String    @default("cron") @map("triggered_by") @db.NVarChar(50)
+
+  @@index([blobName, startedAt(sort: Desc)], map: "ix_csv_blob_sync_log_blob_name")
+  @@index([status, startedAt(sort: Desc)], map: "ix_csv_blob_sync_log_status")
+  @@map("csv_blob_sync_log")
+}

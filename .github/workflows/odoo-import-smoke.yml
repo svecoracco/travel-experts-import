@@ -1,0 +1,128 @@
+name: odoo-import-smoke
+
+# Fase 0 (Hardening) CI-workflow.
+#
+# Doel:
+#   1. Installeert de functions/requirements.txt-basis (odoo-pakket op tag 2.0.7, JSON-2) zonder
+#      dat er ooit een token in de repo hoeft te staan — het GH_TOKEN-secret rewrijt de
+#      git+https-URL op CI-runner-niveau (zie functions/requirements.txt-commentaar).
+#   2. Importeert het odoo-pakket en doet één triviale JSON-2 read tegen een TEST-Odoo-omgeving
+#      (functions/tests/odoo_smoke.py) — nooit tegen productie, nooit een write.
+#   3. Faalt de build als er een GitHub-PAT-vorm of ander plaintext-secret in de repo staat
+#      ("secret-lek-guard").
+#
+# Benodigde GitHub-secrets (repo- of environment-level, NOOIT als repo-variabelen):
+#   GH_TOKEN       - read-only PAT/deploy-key met toegang tot Acco-Group/odoo (voor de pip-install)
+#   ODOO_URL       - TEST-Odoo-omgeving (nooit productie)
+#   ODOO_DATABASE
+#   ODOO_API_KEY
+#   ODOO_USER
+
+on:
+  push:
+    paths:
+      - 'functions/requirements.txt'
+      - 'functions/tests/odoo_smoke.py'
+      - '.github/workflows/odoo-import-smoke.yml'
+  pull_request:
+    paths:
+      - 'functions/requirements.txt'
+      - 'functions/tests/odoo_smoke.py'
+      - '.github/workflows/odoo-import-smoke.yml'
+  workflow_dispatch: {}
+
+jobs:
+  secret-leak-guard:
+    name: secret-lek-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Grep-guard op gecommitte PAT's / plaintext-secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Zoeken naar github_pat_-vormen en andere verdachte plaintext-secrets..."
+          echo "(Lengte-ondergrenzen zijn bewust gekozen zodat geredigeerde voorbeelden zoals"
+          echo " 'github_pat_11AN2XY3A0...<REDACTED>' in docs/hardening/ NIET false-positive gaan -"
+          echo " die bevatten <20 aaneengesloten woordtekens vóór de redactie-markering.)"
+
+          # 1) GitHub fine-grained PAT-vorm (github_pat_...) — de historische lek uit
+          #    travel-experts-backend/requirements.txt regel 50 mag hier nooit terugkeren.
+          #    Minimaal 20 aaneengesloten woordtekens na de prefix: een echte PAT is >>20 tekens;
+          #    de geredigeerde vorm in de docs (10 tekens + '...<REDACTED>') blijft eronder.
+          if grep -rEn --binary-files=without-match 'github_pat_[A-Za-z0-9_]{20,}' \
+              --exclude-dir=.git .; then
+            echo "::error::Gevonden: een github_pat_-waarde in de repo. Build gefaald."
+            exit 1
+          fi
+
+          # 2) Klassieke GitHub PAT-vorm (ghp_...).
+          if grep -rEn --binary-files=without-match 'ghp_[A-Za-z0-9]{20,}' \
+              --exclude-dir=.git .; then
+            echo "::error::Gevonden: een ghp_-token in de repo. Build gefaald."
+            exit 1
+          fi
+
+          # 3) git+https-URL's met basic-auth-credentials erin (user:token@ of token@).
+          #    Zelfde lengte-ondergrens-redenering als bij (1): een echt ingebed token is lang en
+          #    aaneengesloten; de geredigeerde voorbeeldregel in het rotatie-runbook breekt af op
+          #    de ellipsis/'<REDACTED>' vóór de 20-tekens-drempel.
+          if grep -rEn --binary-files=without-match \
+              'git\+https://[A-Za-z0-9_]{20,}(:[A-Za-z0-9_-]+)?@github\.com' \
+              --exclude-dir=.git .; then
+            echo "::error::Gevonden: een git+https-URL met ingebedde credentials. Build gefaald."
+            exit 1
+          fi
+
+          # 4) SendGrid-key-vorm (SG.xxx.yyy).
+          if grep -rEn --binary-files=without-match 'SG\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}' \
+              --exclude-dir=.git .; then
+            echo "::error::Gevonden: een SendGrid-API-key-vorm in de repo. Build gefaald."
+            exit 1
+          fi
+
+          echo "OK: geen github_pat_/ghp_/ingebedde-credential-URL/SendGrid-key-vorm gevonden."
+
+  import-smoke:
+    name: odoo-import-smoke
+    runs-on: ubuntu-latest
+    needs: secret-leak-guard
+    env:
+      ODOO_URL: ${{ secrets.ODOO_URL }}
+      ODOO_DATABASE: ${{ secrets.ODOO_DATABASE }}
+      ODOO_API_KEY: ${{ secrets.ODOO_API_KEY }}
+      ODOO_USER: ${{ secrets.ODOO_USER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Git URL-rewrite voor het private odoo-pakket (GH_TOKEN-secret, geen commit)
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Installeer functions/requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r functions/requirements.txt
+
+      - name: Bevestig odoo-pin (2.0.x, JSON-2)
+        run: |
+          # De pin staat in requirements.txt (@2.0.7). De runtime-metadata bevestigen we soepel:
+          # print de exacte versie (voor menselijke controle) en faal alleen als er géén JSON-2-
+          # capabele 2.0.x geïnstalleerd is — een git+tag-install kan een genormaliseerde
+          # versiestring rapporteren die niet 1-op-1 '2.0.7' is.
+          python -c "import importlib.metadata as m; v = m.version('odoo'); print('odoo version:', v); assert v.startswith('2.0'), f'verwacht 2.0.x (JSON-2), kreeg {v}'"
+
+      - name: Import-smoke-test (JSON-2 triviale read, TEST-Odoo)
+        run: |
+          python functions/tests/odoo_smoke.py

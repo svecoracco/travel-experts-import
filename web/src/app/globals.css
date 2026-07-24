@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/*
+ * Solvidas Branding — Custom Theme
+ * Night Blue: #26313F  |  Horizon Blue: #8791DC
+ * Ground: #ACA290      |  Sand: #D2CDB9
+ *
+ * Distribution: 70% neutral (white/Sand), 20% Night Blue, 10% Horizon Blue
+ */
+
+@theme inline {
+  --color-night-blue: #26313F;
+  --color-horizon-blue: #8791DC;
+  --color-ground: #ACA290;
+  --color-sand: #D2CDB9;
+  --color-sand-light: #E8E5DA;
+
+  --color-primary: #26313F;
+  --color-primary-foreground: #FFFFFF;
+  --color-accent: #8791DC;
+  --color-accent-foreground: #FFFFFF;
+  --color-muted: #D2CDB9;
+  --color-muted-foreground: #5A5549;
+  --color-background: #FFFFFF;
+  --color-foreground: #26313F;
+  --color-card: #F7F6F3;
+  --color-card-foreground: #26313F;
+  --color-border: #D2CDB9;
+  --color-input: #D2CDB9;
+  --color-ring: #8791DC;
+  --color-destructive: #C2534C;
+  --color-destructive-foreground: #FFFFFF;
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  --font-sans: "Poppins", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

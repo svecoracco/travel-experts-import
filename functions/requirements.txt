@@ -1,0 +1,35 @@
+# functions/requirements.txt — Fase 0 (odoo-pin) + Fase 1 (scaffold-basis).
+#
+# Fase 1-scaffold-beslissing: de host (function_app.py + health/functions.py) heeft
+# BEWUST geen extra deps nodig buiten `azure-functions` — de enige trigger vandaag is
+# een triviale ping (geen DB/Odoo/queue-toegang). Dit bewijst dat `func start` "leeg-maar-
+# gezond" draait zonder het private `odoo`-pakket te installeren. Business-deps
+# (pandas/openpyxl/pyodbc/azure-storage-queue/sendgrid/egnyte/...) komen pas in fase 2/3
+# wanneer de plugins/features/import_processor daadwerkelijk geport worden — voeg ze dan
+# hier toe (niet eerder; "Geen dependencies buiten de aangewezen fase").
+#
+# DO NOT include azure-functions-worker in this file — de Python Worker wordt door het
+# Azure Functions-platform beheerd; azure-functions-worker hier toevoegen kan onverwachte
+# problemen geven.
+
+# CORE (host-runtime-dep + gebruikt door het CI-smoke-script, functions/tests/odoo_smoke.py)
+azure-functions
+
+# Accounting/Odoo-toegang — gedeeld pakket, JSON-2.
+#
+# BELANGRIJK: geen inline PAT/token in deze regel (voorheen wel het geval in de bron-repo,
+# travel-experts-backend/requirements.txt regel 50 — zie docs/hardening/rotation-runbook.md).
+# De git+https-installatie-URL hieronder bevat GEEN credentials; CI voorziet het token via een
+# GitHub Actions-secret (GH_TOKEN) door vóór `pip install -r requirements.txt` een git
+# URL-rewrite te registreren:
+#
+#   git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+#
+# Zie .github/workflows/odoo-import-smoke.yml voor de exacte CI-stap. Lokaal ontwikkelen zonder
+# dit token faalt bewust op deze regel — vraag een deploy-key/PAT met read-only repo-scope aan de
+# repo-eigenaar (Acco-Group/odoo), zet 'm als GH_TOKEN in de eigen shell-env, en herhaal de
+# url-rewrite-stap lokaal. Committeer het token nooit.
+#
+# Pin op tag 2.0.7 (JSON-2; `OdooClient(..., api="json2"|"auto")`) — was @1.1.0 (XML-RPC-only) in
+# de bron-repo. Zie beslissing #3 in het plan en het rotatie-runbook voor de before/after-diff.
+odoo @ git+https://github.com/Acco-Group/odoo.git@2.0.7
