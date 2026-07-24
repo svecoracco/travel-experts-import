@@ -1,35 +1,51 @@
-# functions/requirements.txt — Fase 0 (odoo-pin) + Fase 1 (scaffold-basis).
+# functions/requirements.txt - Fase 0 (odoo-pin) + Fase 1 (scaffold-basis) + Fase 2
+# (business-deps voor de geporte plugins/shared/features/syncs).
 #
-# Fase 1-scaffold-beslissing: de host (function_app.py + health/functions.py) heeft
-# BEWUST geen extra deps nodig buiten `azure-functions` — de enige trigger vandaag is
-# een triviale ping (geen DB/Odoo/queue-toegang). Dit bewijst dat `func start` "leeg-maar-
-# gezond" draait zonder het private `odoo`-pakket te installeren. Business-deps
-# (pandas/openpyxl/pyodbc/azure-storage-queue/sendgrid/egnyte/...) komen pas in fase 2/3
-# wanneer de plugins/features/import_processor daadwerkelijk geport worden — voeg ze dan
-# hier toe (niet eerder; "Geen dependencies buiten de aangewezen fase").
+# Fase 1-scaffold-beslissing (historisch): de host had toen bewust geen extra deps
+# nodig buiten `azure-functions`. De kop-comment daar delegeerde business-deps
+# expliciet naar fase 2 ("voeg ze dan hier toe") - dat gebeurt hieronder nu de
+# plugins/shared/features/syncs daadwerkelijk geport zijn en deze pakketten echt
+# importeren (zie de referenties per pakket hieronder).
 #
-# DO NOT include azure-functions-worker in this file — de Python Worker wordt door het
+# DO NOT include azure-functions-worker in this file - de Python Worker wordt door het
 # Azure Functions-platform beheerd; azure-functions-worker hier toevoegen kan onverwachte
 # problemen geven.
 
 # CORE (host-runtime-dep + gebruikt door het CI-smoke-script, functions/tests/odoo_smoke.py)
 azure-functions
 
-# Accounting/Odoo-toegang — gedeeld pakket, JSON-2.
+# Fase 2 - business-deps, elk daadwerkelijk geimporteerd door geporte code:
+# - pandas/numpy: alle 8 plugin-readers (airplus/bsp/commission/divers/ibanfirst/
+#   rail/tui/vivawallet) + syncs/csv_blob_sync.py + syncs/odoo_sync.py.
+# - openpyxl: commission/vivawallet-excel_reader.py + features/vat_return/excel_builder.py.
+# - SQLAlchemy + pyodbc: shared/sql_server.py (BSP/rail/tui-ticketlookups) en
+#   syncs/db.py + syncs/queries.py (csv_blob_sync_log, odoo-settings-sync).
+#   features/vat_return/store.py en shared/config_store.py gebruiken pyodbc rechtstreeks
+#   (raw SQL tegen vat_return_entries/app_config, zie docs/contracts.md §6).
+# - azure-identity + azure-storage-blob: syncs/azure_blob.py (CSV-blob-sync).
+pandas==2.3.3
+numpy
+openpyxl==3.*
+SQLAlchemy==2.0.44
+pyodbc==5.2.0
+azure-identity
+azure-storage-blob==12.26.0
+
+# Accounting/Odoo-toegang - gedeeld pakket, JSON-2.
 #
 # BELANGRIJK: geen inline PAT/token in deze regel (voorheen wel het geval in de bron-repo,
-# travel-experts-backend/requirements.txt regel 50 — zie docs/hardening/rotation-runbook.md).
+# travel-experts-backend/requirements.txt regel 50 - zie docs/hardening/rotation-runbook.md).
 # De git+https-installatie-URL hieronder bevat GEEN credentials; CI voorziet het token via een
-# GitHub Actions-secret (GH_TOKEN) door vóór `pip install -r requirements.txt` een git
+# GitHub Actions-secret (GH_TOKEN) door voor `pip install -r requirements.txt` een git
 # URL-rewrite te registreren:
 #
 #   git config --global url."https://${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
 #
 # Zie .github/workflows/odoo-import-smoke.yml voor de exacte CI-stap. Lokaal ontwikkelen zonder
-# dit token faalt bewust op deze regel — vraag een deploy-key/PAT met read-only repo-scope aan de
+# dit token faalt bewust op deze regel - vraag een deploy-key/PAT met read-only repo-scope aan de
 # repo-eigenaar (Acco-Group/odoo), zet 'm als GH_TOKEN in de eigen shell-env, en herhaal de
 # url-rewrite-stap lokaal. Committeer het token nooit.
 #
-# Pin op tag 2.0.7 (JSON-2; `OdooClient(..., api="json2"|"auto")`) — was @1.1.0 (XML-RPC-only) in
+# Pin op tag 2.0.7 (JSON-2; `OdooClient(..., api="json2"|"auto")`) - was @1.1.0 (XML-RPC-only) in
 # de bron-repo. Zie beslissing #3 in het plan en het rotatie-runbook voor de before/after-diff.
 odoo @ git+https://github.com/Acco-Group/odoo.git@2.0.7

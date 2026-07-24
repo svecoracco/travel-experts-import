@@ -5,9 +5,10 @@
     "AZURE_WEBJOBS_FEATURE_FLAGS": "EnableWorkerIndexing",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
 
-    "_comment_db": "Prisma-schema staat in ../prisma/schema.prisma; functions/ gebruikt raw SQL/pyodbc voor csv_blob_sync_log-writes (beslissing #5), niet Prisma zelf.",
-    "DATABASE_URL": "<sqlserver-connection-string, DEFAULT_SCHEMA op de login bepaalt het client-schema>",
-    "SQL_CONNECTION_STRING": "<pyodbc-connection-string voor raw-SQL-toegang (o.a. csv_blob_sync_log, staging-tabellen)>",
+    "_comment_db": "Prisma-schema staat in ../prisma/schema.prisma; functions/ gebruikt raw SQL/pyodbc voor csv_blob_sync_log/vat_return_entries/app_config-writes+reads (beslissing #5), niet Prisma zelf. DEFAULT_SCHEMA op de login werkt NIET (weerlegd tijdens de fase-1-spike) — het tenant-schema komt hier uitsluitend uit DB_SCHEMA, expliciet als raw-SQL-identifier gekwalificeerd na validatie in functions/env.py. Zie docs/contracts.md §5-§6.",
+    "DATABASE_URL": "<sqlserver-connection-string; alleen relevant voor web/Prisma (;schema=<tenant>; in de connection string) — functions/ gebruikt deze var niet, zie DB_SCHEMA hieronder>",
+    "DB_SCHEMA": "<tenant-schema, bv. bts — moet matchen met ^[a-z][a-z0-9_]*$, zie functions/env.py>",
+    "SQL_CONNECTION_STRING": "<pyodbc-connection-string voor raw-SQL-toegang (o.a. csv_blob_sync_log, vat_return_entries, app_config, staging-tabellen/ticket-lookups)>",
 
     "_comment_odoo": "Gedeeld odoo-pakket (JSON-2) — unificeer op deze vier namen, zie plan-verschil #5 (ODOO_DB/USERNAME/PASSWORD vervalt).",
     "ODOO_URL": "<https://<client>.odoo.com>",
@@ -15,14 +16,17 @@
     "ODOO_API_KEY": "<odoo-api-key, per client/deployment>",
     "ODOO_USER": "<odoo-gebruikersnaam/login voor de API-key>",
 
-    "_comment_queue": "Zie docs/contracts.md §1 — zelfde storage account/queue-naam als web/.env.local se AZURE_QUEUE_*-vars.",
+    "_comment_queue": "Zie docs/contracts.md §1 — zelfde storage account/queue-naam als web/.env.local se AZURE_QUEUE_*-vars. LET OP (fase 3): AZURE_QUEUE_ACCOUNT_URL/AZURE_QUEUE_ACCOUNT_CREDENTIAL worden NIET door functions/-Python-code gelezen (geen env.py-veld) - web (Track B) gebruikt ze rechtstreeks met de Azure Storage Queue SDK om te enqueue'n. De queue-trigger in import_processor.py is een DECLARATIEVE binding (connection='AzureWebJobsStorage', queue_name uit AZURE_QUEUE_IMPORT_JOBS_NAME hieronder, default 'import-jobs'); het Functions-platform lost de connectie zelf op via de app-setting(-groep) genaamd in 'connection'. In productie moet de mens/gate ervoor zorgen dat AzureWebJobsStorage (of een eigen connection-setting-naam, zie het fase-3-eindrapport) naar DEZELFDE storage-account wijst als AZURE_QUEUE_ACCOUNT_URL hieronder - anders ziet de functions-host de door web geplaatste queue-berichten niet.",
     "AZURE_QUEUE_ACCOUNT_URL": "<https://<account>.queue.core.windows.net/>",
     "AZURE_QUEUE_ACCOUNT_CREDENTIAL": "<storage-account-key (leeg bij managed identity)>",
     "AZURE_QUEUE_IMPORT_JOBS_NAME": "import-jobs",
 
-    "_comment_blob": "Voor geüploade import-bestanden (blobRef in de queue-payload) en de CSV-blob-sync (apps/syncs, fase 2).",
+    "_comment_blob": "Voor geüploade import-bestanden (blobRef in de queue-payload) en de CSV-blob-sync (syncs/, fase 2). AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET voeden de ClientSecretCredential in syncs/azure_blob.py.",
     "AZURE_STORAGE_ACCOUNT_URL": "<https://<account>.blob.core.windows.net/>",
     "BLOB_CONTAINER_NAME": "<container-naam>",
+    "AZURE_TENANT_ID": "<azure-ad-tenant-id, voor de blob-service-principal>",
+    "AZURE_CLIENT_ID": "<azure-ad-client-id, voor de blob-service-principal>",
+    "AZURE_CLIENT_SECRET": "<azure-ad-client-secret, voor de blob-service-principal>",
 
     "SENDGRID_API_KEY": "<sendgrid-api-key, per deployment>"
   },

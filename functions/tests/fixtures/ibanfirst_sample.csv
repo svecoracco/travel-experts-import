@@ -1,0 +1,2 @@
+Identificatie,Boekingdatum,Valutadatum,Toestand,Type,Tegenpartij,Beschrijving,Communicatie,Interne referentie,Gedebiteerd bedrag,Gecrediteerd bedrag,Valuta
+TX-0001,15/02/2026,15/02/2026,Definitief,Payment,Some Counterparty,Invoice payment,COMM-1,INT-1,0,150.00,EUR

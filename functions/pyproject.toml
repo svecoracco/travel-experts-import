@@ -1,0 +1,29 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "TID"]
+
+# Harde projectregel #8: één env-module (env.py) — nergens anders in
+# functions/ mag os.environ/os.getenv rechtstreeks aangeraakt worden.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.environ" = { msg = "Directe os.environ-toegang is verboden buiten functions/env.py (harde projectregel #8) — importeer ENV vanuit env.py." }
+"os.getenv" = { msg = "Directe os.getenv-toegang is verboden buiten functions/env.py (harde projectregel #8) — importeer ENV vanuit env.py." }
+
+[tool.ruff.lint.per-file-ignores]
+# env.py IS de ene toegestane plek (rule #8) — mag os.environ rechtstreeks lezen.
+"env.py" = ["TID251"]
+# Fase-0-CI-smoke-script, opgeleverd vóór de fase-2-regel "één env-module";
+# leest bewust rechtstreeks env (met eigen soft-fail) om CI-secretaanwezigheid
+# te detecteren zonder de rest van de host te importeren — buiten scope van
+# deze fase-2-delegatie om te herschrijven, zie het fase-2-eindrapport.
+"tests/odoo_smoke.py" = ["TID251"]
+# De parity-harness moet de OUDE (bronrepo, niet-Track-A) Flask-backend kunnen
+# importeren om oud-vs-nieuw `build_moves` te vergelijken. Die bronmodule
+# (`app.config.Config`) leest `SQL_CONNECTION_STRING` op class-body-eval-tijd
+# en crasht anders al bij import — dit is een eenmalige, geïsoleerde
+# bootstrap-behoefte van de bronrepo (niet van Track A's eigen runtime-config)
+# en dus buiten de scope van harde projectregel #8.
+"tools/parity_harness.py" = ["TID251"]

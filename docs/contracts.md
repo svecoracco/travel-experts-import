@@ -17,6 +17,7 @@
 4. [Function-key-conventie](#4-function-key-conventie)
 5. [Schema-resolutie (spike-uitkomst)](#5-schema-resolutie-spike-uitkomst)
 6. [Schema-resolutie per track](#6-schema-resolutie-per-track)
+7. [Amendementen na fase 1 (orchestrator)](#7-amendementen-na-fase-1-orchestrator)
 
 ---
 
@@ -54,6 +55,11 @@ als niet gezet) in zowel `web` als `functions`. Beide apps verbinden met
 web schrijft de queue-message rechtstreeks met de Azure Storage Queue SDK, de
 functions-host wordt automatisch getriggerd door de queue-binding (geen
 HTTP-call, geen function-key nodig voor dit pad).
+
+> **Amendement C (na fase 3, zie §7):** de functions-**queue-trigger** bindt via
+> `connection="AzureWebJobsStorage"` (app-setting-naam, platform-resolved), terwijl
+> **web** enqueue't via de Storage-Queue-SDK met `AZURE_QUEUE_ACCOUNT_URL/CREDENTIAL`.
+> Deployment-eis: beide moeten naar hetzelfde storage-account + dezelfde queue-naam wijzen.
 
 ### Payload-vorm (minimaal, uitbreidbaar met optionele velden)
 
@@ -174,7 +180,9 @@ Poort van `check_vat_return` / `service.py::check_existing_entry`.
 
 Poort van `dismiss_vat_return` / `service.py::dismiss_entry`.
 
-- Body: `{ "company_id": 1, "period": "2026-02" }`
+- Body: `{ "company_id": 1, "period": "2026-02", "dismissed_by": "user@x.com" }`
+  (`dismissed_by` = e-mail van de ingelogde gebruiker, door Track B uit de NextAuth-sessie;
+  optioneel maar vereist voor audittrail-pariteit — vult `vat_return_entries.dismissed_by`. Zie **§7 amendement A**.)
 - 200: `{ "success": true }`
 - 404: `{ "error": "No active correction entry found for this period" }`
 - 400: `company_id`/`period` ontbreekt.
@@ -194,7 +202,9 @@ Poort van `book_vat_return` / `service.py::book_correction_entry`.
     "start_data": { "<vat_code>": { "<grid>": 0.0 } }
   }
   ```
-  (`start_data` optioneel — alleen nodig voor de Excel-bijlage.)
+  (`start_data` optioneel — alleen nodig voor de Excel-bijlage. Body mag daarnaast
+  `created_by` dragen — e-mail van de ingelogde gebruiker, door Track B uit de
+  NextAuth-sessie; vult `vat_return_entries.created_by` voor audittrail-pariteit. Zie **§7 amendement A**.)
 - 200: `{ "success": true, "move_id": 456, "odoo_move_name": "MISC/2026/0043", "warning"?: "string" }`
 - 409 (idempotentie — entry bestaat al):
   `{ "error": "correction_exists", "move_id": 123, "move_name": "...", "created_at": "...", "created_by": "..." }`
@@ -355,6 +365,9 @@ export interface ImportJobStatus {
 
 - 404 als de job niet bestaat; 403 als de sessie geen toegang heeft tot
   `companyId` (authz in Next.js, niet in de functie).
+- `skipReportPath` is een **blob-naam** in dezelfde container als `blobRef`
+  (`skip-reports/{jobId}_skip_report.xlsx`), **geen** lokaal pad — Track B's download-route
+  (fase 5) haalt het uit Blob Storage. Zie **§7 amendement B**.
 
 ---
 
@@ -455,3 +468,54 @@ kwalificeren. **Beide tracks halen de tenant uit env — nooit uit een default**
   (`;schema=` in `DATABASE_URL` voor web; `DB_SCHEMA` voor functions) die naar
   **hetzelfde** SQL-schema wijst. Nooit een default, nooit afgeleid uit
   hostname/branch/mapnaam — zie harde projectregels #7 en #8.
+
+---
+
+## 7. Amendementen na fase 1 (orchestrator)
+
+> Deze sectie legt afstemmingen vast die ná fase 1 nodig bleken toen Track A
+> (fase 2-3) opleverde en Track B ze gaat consumeren. Conform de harde
+> projectregel "contracts.md wijzigt alleen in fase 1 — latere wijziging =
+> expliciet afstemmen vóór de andere track ze nodig heeft" voert de orchestrator
+> deze afstemming uit **vóór Track B (fase 4-5) start**. §1-§6 hierboven blijven de
+> bevroren basis; onderstaande amendementen zijn er expliciet (met datum + reden)
+> aan toegevoegd, niet stilzwijgend ingeslepen.
+
+### Amendement A — audittrail-velden op de VAT-return-DTO's (§2.3/§2.4)
+
+_2026-07-24, na fase 3._ De oude Flask-code vulde `vat_return_entries.created_by`
+en `dismissed_by` uit `g.current_user` (de sessie). Nu doet **Track B** (NextAuth)
+de user-auth, dus **Track B levert de waarde mee in de request-body**:
+
+- `POST /vat-return/book` → optioneel `created_by` (string, e-mail; vult
+  `vat_return_entries.created_by`, NVARCHAR(100)).
+- `POST /vat-return/dismiss` → optioneel `dismissed_by` (string, e-mail; vult
+  `vat_return_entries.dismissed_by`).
+
+Niet-breaking (de functie behandelt ze als optioneel; ontbreekt de waarde → NULL).
+Voor **audittrail-pariteit** met het oude systeem MOET Track B ze echter sturen.
+Type/lengte matchen `prisma/schema.prisma::VatReturnEntry` — dat veld anticipeerde
+dit al (`createdBy String? // user-email uit de sessie`).
+
+### Amendement B — `skipReportPath` is een blob-naam, geen lokaal pad (§3.2)
+
+_2026-07-24, na fase 3._ De bron schreef skip-reports naar lokale schijf
+(`UPLOAD_DIR`); een stateless Function kan dat niet betrouwbaar aanbieden voor
+latere download. De queue-functie schrijft skip-reports daarom naar **dezelfde
+Blob-container als `blobRef`**, als `skip-reports/{jobId}_skip_report.xlsx`, en zet
+die **blob-naam** in `import_jobs.skip_report_path`. De kolomvorm (§3.2
+`skipReportPath: string | null`) verandert niet; alleen de interpretatie ligt nu
+vast: **Track B's download-route (fase 5) haalt het bestand uit Blob Storage**,
+niet van schijf.
+
+### Amendement C — queue-connectie: trigger-kant vs. enqueue-kant (§1)
+
+_2026-07-24, na fase 3._ De functions-**queue-trigger** bindt via
+`connection="AzureWebJobsStorage"` (een Azure-Functions **app-setting-naam**, door
+het platform geresolved vóór de trigger-code draait — bewust NIET via `env.py`, want
+het is geen applicatie-env). **Web** enqueue't daarentegen via de Storage-Queue-SDK
+met `AZURE_QUEUE_ACCOUNT_URL` + `AZURE_QUEUE_ACCOUNT_CREDENTIAL` (§1).
+**Deployment-/gate-eis** (App Settings, mens): `AzureWebJobsStorage` (functions-app)
+en `AZURE_QUEUE_ACCOUNT_URL` (web) MOETEN naar **hetzelfde** storage-account wijzen,
+en beide apps gebruiken dezelfde queue-naam `AZURE_QUEUE_IMPORT_JOBS_NAME` (default
+`import-jobs`). Op te nemen in `docs/onboard-client.md` (fase 9) + de fase-7/8-gates.

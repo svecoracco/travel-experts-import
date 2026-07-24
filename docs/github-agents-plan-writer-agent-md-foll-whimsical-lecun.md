@@ -56,8 +56,8 @@ The `simplify` / `code-review` skills are for the executing agents, not this pla
 | ---- | ---------------------------------------------- | ---------------------------- | --------------- |
 | 0    | Hardening (secrets/PAT, pin-bump, CI-smoke)    | — (eerst, exclusief)         | ✅ Klaar        |
 | 1    | Contracten & fundament (scaffold, Prisma, schema-spike) | — (contract-first, één agent) | ✅ Klaar        |
-| 2    | Odoo-consolidatie + plugin/feature-port         | A (functions)                | ⬜ Niet gestart |
-| 3    | Queue-based import                             | A (functions)                | ⬜ Niet gestart |
+| 2    | Odoo-consolidatie + plugin/feature-port         | A (functions)                | ✅ Klaar        |
+| 3    | Queue-based import                             | A (functions)                | ✅ Klaar        |
 | 4    | Auth in Next.js (NextAuth = enige auth)         | B (web)                      | ⬜ Niet gestart |
 | 5    | Data/CRUD + read-routes + import-UI             | B (web)                      | ⬜ Niet gestart |
 | 6    | Branding & config-gedreven UI                   | B (web)                      | ⬜ Niet gestart |
@@ -503,69 +503,123 @@ scripts/instructies, de mens voert de rotatie uit op de gate.
 
 ## Fase 2 — Odoo-consolidatie + plugin/feature-port (Track A)
 
-**Status: ⬜ Niet gestart** · Vereist: fase 1 · Track A — vóór Track B (sequentieel) · Geschat: groot
+**Status: ✅ Klaar** · Vereist: fase 1 · Track A — vóór Track B (sequentieel) · Geschat: groot
 
 > Stijlreferentie: `travel-experts-backend/apps/main/app/plugins/base.py` (`ImportPlugin` ABC:
 > `validate_file/parse/build_moves/execute`; dataclasses `MovePayload/ParsedData/ExecutionResult`).
 
 ### 2.1 `functions/odoo_conn.py` + `shared/`
 
-- [ ] `odoo_conn.py`: `from odoo import OdooClient`; `OdooClient(database, api_key, user, url, api="auto")`
+- [x] `odoo_conn.py`: `from odoo import OdooClient`; `OdooClient(database, api_key, user, url, api="auto")`
       uit de `ODOO_DATABASE/API_KEY/USER/URL`-env (unificeer; verwijder `ODOO_DB/USERNAME/PASSWORD`).
-- [ ] Herschrijf `shared/{move_utils,account_utils,invoice_lookup}.py`: elke `execute_kw`/`search_read`/
+      Env via het nieuwe `functions/env.py` (het ene Track-A-env-module, regels #7/#8).
+- [x] Herschrijf `shared/{move_utils,account_utils,invoice_lookup}.py`: elke `execute_kw`/`search_read`/
       `read`/`write` → pakket-model-API (`client.<model>.search_read/create/write`). Behoud
       `action_post`, `resolve_account_id`, `resolve_tax_id`, invoice-lookup-gedrag exact.
 
 ### 2.2 Plugins (`functions/plugins/<n>/`)
 
-- [ ] Port alle 8 (`airplus, bsp, commission, divers, ibanfirst, rail, tui, vivawallet`):
+- [x] Port alle 8 (`airplus, bsp, commission, divers, ibanfirst, rail, tui, vivawallet`):
       **reader/transform 1-op-1**; herschrijf uitsluitend de Odoo-call-sites (transport) en de
       entrypoint. Behoud de `payment_reference`-idempotentie exact (bv. airplus
       `{factuur_nr}-{i:04d}`; tui `TUI-{ref}-{group}`; rail = `OFFICIAL_DOC_NUMBER`).
-- [ ] Behoud de idempotentie-check (batch `search_read` op `payment_reference` + `move_type`) via de
+- [x] Behoud de idempotentie-check (batch `search_read` op `payment_reference` + `move_type`) via de
       pakket-API.
 
 ### 2.3 Features als HTTP-triggers (`functions/features/`)
 
-- [ ] Port `vat_return` (`GET data/check`, `POST book/dismiss`; boekt correctie-`account.move` +
+- [~] Port `vat_return` (`GET data/check`, `POST book/dismiss`; boekt correctie-`account.move` +
       `action_post`; schrijft `vat_return_entries`), `sbmov` (`GET suppliers`, `POST move`;
       `button_cancel` + `xmlrpc.client.Fault` → pakket-equivalent), `translation_check`
       (`GET check`, `POST fix`) als `auth_level=function` HTTP-triggers.
-- [ ] Port de timer-syncs (`syncs/`, al pakket-gebaseerd) grotendeels 1-op-1.
+      **Afwijking**: `dismiss`/`book`-DTO's missen `dismissed_by`/`created_by` in `contracts.md` §2.3/§2.4
+      (oude code las die uit de Flask-sessie) → nu als optionele niet-breaking body-velden ingelezen;
+      orchestrator stemt af met Track B vóór fase 4 (zie Fase 2-noot + slotsectie).
+- [~] Port de timer-syncs (`syncs/`, al pakket-gebaseerd) grotendeels 1-op-1.
+      **Afwijking**: latente bug in bron `integrations/odoo.py` (`write_df_to_db`-argumentbotsing,
+      stil verzwolgen `TypeError`) gecorrigeerd; `CsvBlobSyncLog` gereconcilieerd tegen de echte DDL (§6).
 
 ### 2.4 Payload-parity-harness (`functions/tools/parity_harness.py`)
 
-- [ ] Draai **oud** (`travel-experts-backend`) en **nieuw** (`functions`) `build_moves` op dezelfde
+- [~] Draai **oud** (`travel-experts-backend`) en **nieuw** (`functions`) `build_moves` op dezelfde
       BTS-input (bv. `C:\github\travel-experts\files\**`) en **diff de payloads** (incl.
-      `payment_reference`) — **nooit** dubbel naar Odoo posten.
+      `payment_reference`) — **nooit** dubbel naar Odoo posten. **8/8 plugins: 0 verschillen.**
+      **Afwijking**: fixtures volledig synthetisch (`tests/fixtures/`) i.p.v. de echte inputbestanden —
+      het `VIVA WALLET`-bestand bevatte klant-PII en is bewust niet gebruikt/gecommit.
 
-- [ ] Verificatie: `cd functions && ruff check . && pytest -q`; `! grep -rEl "xmlrpc|execute_kw" functions/`;
+- [x] Verificatie: `cd functions && ruff check . && pytest -q`; `! grep -rEl "xmlrpc|execute_kw" functions/`;
       live smoke read/write over JSON-2 tegen test-Odoo slaagt; parity-harness draait per plugin.
+      **Orchestrator onafhankelijk gedraaid**: ruff ✅ · `pytest -q` 23 passed ✅ · parity 8/8 0-diff ✅ ·
+      grep schoon op productiepad (2 residuen enkel in `tools/`+`tests/`). Live JSON-2-smoke = infra-gated.
 
-> **Fase 2-noot (uitvoering)**: <in te vullen door de uitvoerende agent>.
+> **Fase 2-noot (uitvoering)**: Agentwerk klaar (2026-07-24), door de orchestrator onafhankelijk geverifieerd.
+> **Opgeleverd** in `functions/`: `env.py` (het ene Track-A-env-module — valideert bij import, crasht met
+> `MissingEnvError` bij ontbrekende var; `DB_SCHEMA` gevalideerd tegen `^[a-z][a-z0-9_]*$` — regels #7/#8);
+> `odoo_conn.py` (JSON-2 via `from odoo import OdooClient`, `api="auto"`, lazy import); `shared/{account_utils,
+> move_utils,invoice_lookup,sql_server}.py`; alle **8 plugins** + `plugins/base.py`/`__init__.py`;
+> `features/{vat_return,sbmov,translation_check}/functions.py` (`auth_level=FUNCTION`-Blueprints, DTO's per
+> `contracts.md` §2, `xmlrpc.client.Fault` → `odoo.exceptions.OdooFault`); `syncs/` (timer + `/sync/csv-blob`,
+> hardcoded schema `"bts"` → `env.ENV.db_schema`); `tools/{parity_harness,fake_odoo_client}.py`; tests +
+> synthetische fixtures. Alle Blueprints geregistreerd in `function_app.py`.
+> **Verificatie (orchestrator, onafhankelijk, allen groen)**: `ruff check .` ✅; `pytest -q` → **23 passed** ✅;
+> `python -m tools.parity_harness` → **8/8 plugins, 0 verschillen** ✅; ownership-grens schoon (alleen
+> `functions/**`, `git status`); `func start` host "vol-en-gezond", alle fase-2-triggers geregistreerd
+> (dummy-env, nooit persistent). **Infra-gated residu (niet-blokkerend)**: live JSON-2-smoke tegen test-Odoo +
+> volledige `pip install odoo` (vereist CI-`GH_TOKEN`) — zoals de fase-0-residu.
+> **Toegevoegde runtime-deps** (`requirements.txt`, fase-2 = aangewezen fase; scaffold-kop delegeerde
+> business-deps expliciet naar fase 2; `odoo`-pin byte-voor-byte ongewijzigd, geen token): `pandas`, `numpy`,
+> `openpyxl`, `SQLAlchemy`, `pyodbc`, `azure-identity`, `azure-storage-blob`.
+> **Openstaande drift/opvolging** (zie ook slotsectie): (1) **contract-drift** `dismissed_by`/`created_by` op
+> `dismiss`/`book` — orchestrator reconcilieert `contracts.md` §2.3/§2.4 vóór fase 4 (nu nog niet gewijzigd,
+> als optioneel veld ingelezen). (2) **interim** `shared/config_store.py` (`resolve_config`-precedentie voor
+> vat_return/sbmov) — **fase 3 consolideert dit met het officiële `config_resolve.py`**. (3) **fase-9-lint**
+> `! grep -rEl "xmlrpc|execute_kw" functions/` moet `tests/`+`tools/` uitsluiten (test-double + fase-0-comment).
+> (4) ruff `TID251`-per-file-ignore voor `tools/parity_harness.py` — bevestigt dat env-regel #8 daadwerkelijk
+> via ruff wordt afgedwongen.
 
 ---
 
 ## Fase 3 — Queue-based import (Track A)
 
-**Status: ⬜ Niet gestart** · Vereist: fase 2 (geporte plugins/shared) · Geschat: middel
+**Status: ✅ Klaar** · Vereist: fase 2 (geporte plugins/shared) · Geschat: middel
 
 ### 3.1 `functions/import_processor.py` (queue-trigger)
 
-- [ ] Port `run_import_async` (`apps/main/app/jobs/runner.py`): pipeline validate → parse → connect
+- [x] Port `run_import_async` (`apps/main/app/jobs/runner.py`): pipeline validate → parse → connect
       (`odoo_conn`) → `build_moves` → `execute` → skip-report → **schrijf progress/status naar
-      `import_jobs`** (i.p.v. de in-memory store). Idempotent op herlevering (job-status-guard +
-      `payment_reference` aan Odoo-zijde).
+      `import_jobs`** (i.p.v. de in-memory store). Idempotent op herlevering (job-status-guard via
+      atomische `UPDATE ... WHERE status='queued'` + `payment_reference` aan Odoo-zijde).
 
 ### 3.2 `functions/config_resolve.py`
 
-- [ ] Port `resolve_config`-precedentie (script → company → global → default) + de plugin-merge
+- [x] Port `resolve_config`-precedentie (script → company → global → default) + de plugin-merge
       `build_import_config`. **Bron van config = de DB** (beslissing #2), niet de queue-payload.
+      Fase-2-interim `shared/config_store.py` **geconsolideerd** hierin (verwijderd + features geredirect).
 
-- [ ] Verificatie: een grote import enqueue't, de queue-functie schrijft voortgang naar `import_jobs`,
-      status is uitleesbaar via de DB; `pytest -q` groen.
+- [x] Verificatie: een grote import enqueue't, de queue-functie schrijft voortgang naar `import_jobs`,
+      status is uitleesbaar via de DB; `pytest -q` groen. **Orchestrator onafhankelijk gedraaid**: ruff ✅ ·
+      `pytest -q` **46 passed** ✅ · parity 8/8 0-diff ✅ · `func start` indexeert de queue-trigger. Live
+      enqueue→DB = infra-gated.
 
-> **Fase 3-noot (uitvoering)**: <in te vullen door de uitvoerende agent>.
+> **Fase 3-noot (uitvoering)**: Agentwerk klaar (2026-07-24), orchestrator onafhankelijk geverifieerd.
+> **Opgeleverd**: `import_processor.py` (queue-trigger Blueprint; port van `run_import_async`, businesslogica
+> ongewijzigd; in-memory `_progress` → throttled writes naar `[{DB_SCHEMA}].[import_jobs]` conform
+> `contracts.md` §3; idempotentie via atomische `UPDATE ... WHERE status='queued'` = job-status-guard +
+> `payment_reference` Odoo-zijde; job-opties/`blobRef` uit `import_jobs` via `jobId`, niet uit de payload;
+> `blobRef` naar tijdelijk lokaal bestand voor de plugin-`Path`, daarna opgeruimd); `config_resolve.py`
+> (`resolve_config`-precedentie + `build_import_config`, achter mockbaar `ConfigRepo`-protocol).
+> `discover_plugins()` (in fase 2 dode registry) wordt nu bij het laden van `import_processor` aangeroepen.
+> **Consolidatie**: de fase-2-interim `shared/config_store.py` is **verwijderd**; `features/{vat_return,sbmov}/
+> service.py` importeren nu `resolve_config` uit `config_resolve` (regressietest in `tests/test_config_resolve.py`).
+> **Verificatie (orchestrator, onafhankelijk, groen)**: `ruff check .` ✅; `pytest -q` → **46 passed** (23 +
+> 23 nieuw: job-status-guard/skip, progress-mapping+throttle, plugin-dispatch, fout→`failed`, echte
+> `func.QueueMessage`-decode) ✅; `python -m tools.parity_harness` → **8/8 0-diff** ✅; `func start` indexeert
+> `ImportProcessor: queueTrigger` foutloos; ownership-grens schoon. **Infra-gated**: live enqueue→queue→
+> `import_jobs`-write. Geen nieuwe deps.
+> **Contract-afstemming (door orchestrator verwerkt in `contracts.md` §7, vóór Track B)**: (A) `created_by`/
+> `dismissed_by` als optionele body-velden op `/vat-return/book`|`/dismiss` (audittrail-pariteit). (B)
+> `skipReportPath` = **blob-naam** i.p.v. lokaal pad (Track B-download uit Blob). (C) queue-trigger bindt op
+> `AzureWebJobsStorage`; deployment-eis: zelfde storage-account als web's `AZURE_QUEUE_ACCOUNT_URL`.
 
 ---
 
@@ -761,4 +815,12 @@ scripts/instructies, de mens voert de rotatie uit op de gate.
 
 | Fase | Afwijking | Motivering | Impact |
 | ---- | --------- | ---------- | ------ |
-|      |           |            |        |
+| 2 | Contract-drift: `dismiss`/`book`-DTO's (§2.3/§2.4) missen `dismissed_by`/`created_by` | Oude Flask-code las de user uit de sessie; nu optionele niet-breaking body-velden | Orchestrator reconcilieert `contracts.md` met Track B vóór fase 4 (nog niet gewijzigd) |
+| 2 | Parity-fixtures volledig synthetisch i.p.v. het echte `VIVA WALLET`-bestand | Dat bestand bevatte klant-PII (e-mail/telefoon/kaartnr) — niet in de repo | Geen; pariteit blijft 8/8 0-diff op synthetische input |
+| 2 | Bug-fix in geporte sync: `write_df_to_db`-argumentbotsing | Bron gaf altijd een stil-verzwolgen `TypeError`; port doet nu wat bedoeld was | Sync (geen plugin-payload) → buiten parity-scope; gedrag nu correct |
+| 2 | `CsvBlobSyncLog`: `unique=True`/`synced_to_table` verwijderd | Spiegelt de echte DDL (§6), niet het licht-afwijkende SQLAlchemy-model (fase-1-contract) | Geen |
+| 2 | Interim `shared/config_store.py` voor `resolve_config`-precedentie | vat_return/sbmov hebben config-resolutie nodig vóór fase 3 bestaat | Fase 3 consolideert met `config_resolve.py` |
+| 2 | grep-residu `xmlrpc\|execute_kw` in `tools/`+`tests/` | Offline test-double + fase-0-comment; geen productiepad | Fase-9-lint moet `tests/`+`tools/` uitsluiten |
+| 3 | Skip-report → Blob (`skip-reports/{jobId}_...xlsx`) i.p.v. lokale schijf | Stateless Function kan lokale schijf niet betrouwbaar aanbieden voor download | `contracts.md` §7-B; Track B-download (fase 5) haalt uit Blob |
+| 3 | Queue-trigger bindt op `AzureWebJobsStorage` (niet via `env.py`) | Functions-binding = platform-resolved app-setting, geen applicatie-env | `contracts.md` §7-C; gate-eis: zelfde storage-account als web |
+| 3 | Legacy dode config-sleutels (`odoo_url/db/username/password`, `bsp_doc_types`) niet geport | grep bevestigt dat plugin/bron-code ze niet leest | Geen |
